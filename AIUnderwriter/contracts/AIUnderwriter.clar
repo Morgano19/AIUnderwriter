@@ -337,4 +337,86 @@
     })
 )
 
+;; Advanced AI-driven dynamic premium recalculation feature
+;; This function analyzes policy performance and adjusts premiums based on claims history,
+;; AI risk reassessment, and behavioral patterns to ensure fair pricing and sustainability
+(define-public (recalculate-premium-with-ai-analysis 
+    (policy-id uint) 
+    (new-health-score uint) 
+    (behavioral-improvement uint))
+    (let
+        (
+            (policy (unwrap! (map-get? policies { policy-id: policy-id }) err-not-found))
+            (holder (get holder policy))
+            (applicant-data (unwrap! (map-get? applicants { applicant: holder }) err-not-found))
+            (current-premium (get premium policy))
+            (claims-count (get claims-count policy))
+            (total-claimed (get total-claimed policy))
+            (coverage (get coverage-amount policy))
+            
+            ;; AI-driven risk reassessment factors
+            (claims-ratio (if (> coverage u0) (/ (* total-claimed u100) coverage) u0))
+            (frequency-penalty (if (> claims-count u3) (* claims-count u5) u0))
+            (health-improvement-bonus (if (> new-health-score u70) u10 u0))
+            (behavioral-bonus (/ behavioral-improvement u10))
+            
+            ;; Calculate adjustment factor (can increase or decrease premium)
+            (risk-adjustment (+ claims-ratio frequency-penalty))
+            (improvement-bonus (+ health-improvement-bonus behavioral-bonus))
+            (net-adjustment (if (> risk-adjustment improvement-bonus)
+                (- risk-adjustment improvement-bonus)
+                u0))
+            
+            ;; Apply adjustment with caps (max 50% increase, max 30% decrease)
+            (adjustment-multiplier (if (> net-adjustment u50) u150 (+ u100 net-adjustment)))
+            (discount-multiplier (if (> improvement-bonus risk-adjustment)
+                (let ((discount (- improvement-bonus risk-adjustment)))
+                    (if (> discount u30) u70 (- u100 discount)))
+                u100))
+            
+            (final-multiplier (if (> adjustment-multiplier u100) adjustment-multiplier discount-multiplier))
+            (new-premium (/ (* current-premium final-multiplier) u100))
+            
+            ;; Update AI risk score based on new data
+            (updated-ai-score (calculate-ai-risk-score 
+                (get age applicant-data)
+                (get bmi applicant-data)
+                (get pre-existing-conditions applicant-data)
+                new-health-score))
+            (new-risk-level (get-risk-level updated-ai-score))
+        )
+        ;; Validate authorization and policy status
+        (asserts! (or (is-eq tx-sender contract-owner) (is-eq tx-sender holder)) err-unauthorized)
+        (asserts! (is-eq (get status policy) status-active) err-policy-expired)
+        (asserts! (<= new-health-score u100) err-invalid-input)
+        (asserts! (<= behavioral-improvement u100) err-invalid-input)
+        
+        ;; Update policy with new premium
+        (map-set policies
+            { policy-id: policy-id }
+            (merge policy { premium: new-premium })
+        )
+        
+        ;; Update applicant data with new AI assessment
+        (map-set applicants
+            { applicant: holder }
+            (merge applicant-data {
+                lifestyle-score: new-health-score,
+                ai-risk-score: updated-ai-score,
+                risk-level: new-risk-level
+            })
+        )
+        
+        (ok {
+            old-premium: current-premium,
+            new-premium: new-premium,
+            adjustment-percent: (if (> new-premium current-premium)
+                (- final-multiplier u100)
+                (- u100 final-multiplier)),
+            updated-risk-level: new-risk-level,
+            ai-risk-score: updated-ai-score
+        })
+    )
+)
+
 
